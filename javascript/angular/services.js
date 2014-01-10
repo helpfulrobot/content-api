@@ -3,7 +3,7 @@
 /**
  * Module for communicating with the backend layer.
  */
-function SSApi($http, $q) {
+function SSApi($http, $q, $timeout) {
 
 	/**
 	 * Produces a Model object which can be used for accessing the backend API.
@@ -78,7 +78,12 @@ function SSApi($http, $q) {
 
 	}
 
+	// Initialise the API layer. This is expected to be executed by the application in a run block.
+	this.initialise = function() {
+		// @todo async fetch of metadata. At present, we just simulate the delay of the ajax request.
+		return $timeout(function() {}, 500);
+	}
 }
 
 angular.module('ssContentApi.services', [])
-	.service('ssApi', ['$http', '$q', SSApi]);
+	.service('ssApi', ['$http', '$q', '$timeout', SSApi]);
