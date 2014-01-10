@@ -1,0 +1,6 @@
+---
+Name: contentapiroutes
+---
+Director:
+  rules:
+    'contentapi/$Model//$Arg1/$Arg2' : ContentAPIController
