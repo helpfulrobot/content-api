@@ -75,7 +75,10 @@ class ContentAPIController extends WebServiceController {
 				$response = $this->deleteModel($model, $arg1, $arg2);
 			} else {
 				if ($arg1) {
+					// URL parameter overrides the ID in the body.
 					$response = $this->updateModel($model, $arg1, $arg2, $queryParams);
+				} else if (isset($queryParams['ID'])) {
+					$response = $this->updateModel($model, $queryParams['ID'], $arg2, $queryParams);
 				} else {
 					$response = $this->createModel($model, $queryParams);
 				}
@@ -233,7 +236,7 @@ class ContentAPIController extends WebServiceController {
 
 				if ( !is_array($value) ) {
 
-					if ( array_key_exists($attribute, $has_one) ) {
+					if ( is_array($has_one) && array_key_exists($attribute, $has_one) ) {
 
 						$relation = $attribute . 'ID';
 						$object->$relation = $value;
@@ -248,11 +251,11 @@ class ContentAPIController extends WebServiceController {
 
 				} else {
 
-					//has_many, many_many or $belong_many_many
+					//has_many, many_many or belong_many_many
 					if (
-						array_key_exists($attribute, $has_many) ||
-						array_key_exists($attribute, $many_many) ||
-						array_key_exists($attribute, $belongs_many_many) 
+						is_array($has_many) && array_key_exists($attribute, $has_many) ||
+						is_array($many_many) && array_key_exists($attribute, $many_many) ||
+						is_array($belongs_many_many) && array_key_exists($attribute, $belongs_many_many) 
 					) {
 						$hasRelationChanges = true;
 						$ssList = $object->{$attribute}();

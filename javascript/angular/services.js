@@ -6,80 +6,102 @@
 function SSApi($http, $q, $timeout) {
 
 	/**
+	 * Prototypes for dataObjects.
+	 */
+	var prototypes = {}
+
+	/**
 	 * Produces a Model object which can be used for accessing the backend API.
 	 *
+	 * @param {string} modelClass to create
 	 * @param {Object} config Describes the requested model instance. Has following properties:
 	 *
-	 *		- scope {string} scope describing the object. Can be $scope if refering to single obj as a model.
-	 *		- modelClass {string} name of the class
-	 *		- fields {array} fields on the class
-	 *		- scopeAutoUpdate {bool} (default: true) auto-updates the scope on successful fetch/write.
+	 *		- model {string} Class to create.
 	 */
-	this.modelFactory = function(config) {
+	this.createDataObject = function(config) {
 
-		function Model(config) {
+		return new prototypes[config.model](config);
 
-			config = angular.extend({
-				scopeAutoUpdate: true
-			}, config);
+	}
 
-			this.getConfig = function() {
-				return config;
-			}
+	// Initialise the API layer. This is expected to be executed by the application in a run block.
+	this.initialise = function() {
+
+		prototypes.DataObject = function DataObject(config) {
+
+			if (typeof config!=='undefined') this.config = config;
 
 			/**
-			 * Synchronise the scope to the backend through the API.
+			 * Write the object to the backend.
 			 */
 			this.write = function() {
 
 				var objData = {};
 				var deferred = $q.defer();
-				var config = this.getConfig();
+				var self = this;
 
-				angular.forEach(config.fields, function(field) {
-					if (typeof config.scope[field]!=='undefined') {
-						objData[field] = config.scope[field];
+				// Extract writable fields.
+				angular.forEach(this.db, function(type, field) {
+					if (typeof self[field]!=='undefined') {
+						objData[field] = self[field];
 					}
 				});
 
 				$http({
 					method: 'POST',
-					url: '../../api/' + config.modelClass + '/',
-					data: [ objData ]
+					url: 'contentapi/' + this.config.model + '/?token=1:775f9cc1168c095b1e156d8e7b58b6c4052fbdf8',
+					data: objData
 				}).then(
-					function(result) {
 
-						if (config.scopeAutoUpdate) {
-							angular.forEach(config.fields, function(field) {
-								if (typeof result[field]!=='undefined') {
-									config.scope[field] = result.data[field];
-								}
-							});
-						}
+					function(result) {
+						angular.forEach(self.db, function(type, field) {
+							if (typeof result.data.response[field]!=='undefined') {
+								self[field] = result.data.response[field];
+							}
+						});
 
 						deferred.resolve(result);
 					},
+
 					function(reason) {
 						switch (reason.status) {
 							default:
 								reason.friendlyMessage = 'Request refused by the server.';
 								break;
 						}
+
 						deferred.reject(reason);
 					}
+
 				);
 
 				return deferred.promise;
 
 			}
+
 		}
 
-		return new Model(config);
+		prototypes.Post = function Post(config) {
 
-	}
+			if (typeof config!=='undefined') this.config = config;
 
-	// Initialise the API layer. This is expected to be executed by the application in a run block.
-	this.initialise = function() {
+			this.db = {
+				"ID": "Int",
+				"Title": "Varchar(255)",
+				"MarkdownContent": "Text",
+				"URL": "Text"
+			};
+
+			this.hasOne = {
+				"Parent": "Page",
+				"Image": "Image"
+			};
+
+		}
+
+		prototypes.Post.prototype = new prototypes.DataObject();
+		prototypes.Post.prototype.constructor = prototypes.Post;
+
 		// @todo async fetch of metadata. At present, we just simulate the delay of the ajax request.
 		return $timeout(function() {}, 500);
 	}
