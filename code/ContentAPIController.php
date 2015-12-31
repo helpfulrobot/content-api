@@ -38,257 +38,240 @@
  *
  */
 
-class ContentAPIController extends WebServiceController {
+class ContentAPIController extends WebServiceController
+{
 
-	protected $format = 'json';
+    protected $format = 'json';
 
-	public function handleService() {
-		$model = $this->request->param('Model');
-		// Arg1 can be a method or an ID (as in contentapi/Member/last or contentapi/Member/1)
-		$arg1 = $this->request->param('Arg1');
-		// Arg2 can be an ID or other parameter (as in contentapi/Member/column/ID or contentapi/Member/delete/1)
-		$arg2 = $this->request->param('Arg2');
+    public function handleService()
+    {
+        $model = $this->request->param('Model');
+        // Arg1 can be a method or an ID (as in contentapi/Member/last or contentapi/Member/1)
+        $arg1 = $this->request->param('Arg1');
+        // Arg2 can be an ID or other parameter (as in contentapi/Member/column/ID or contentapi/Member/delete/1)
+        $arg2 = $this->request->param('Arg2');
 
-		$body = $this->request->getBody();
-		$requestType = strlen($body) > 0 ? 'POST' : $this->request->httpMethod();
-		$queryParams = $this->getRequestArgs($requestType);
+        $body = $this->request->getBody();
+        $requestType = strlen($body) > 0 ? 'POST' : $this->request->httpMethod();
+        $queryParams = $this->getRequestArgs($requestType);
 
-		// Validate Model name + store
-		if ($model) {
-			if ( !class_exists($model) ) {
-				return new WebServiceException(500, "Model '$model' does not exist");
-			}
-		} else {
-			// If model missing, stop + return blank object
-			return new WebServiceException(500, "ContentAPIController::handleService expects \$Model parameter");
-		}
+        // Validate Model name + store
+        if ($model) {
+            if (!class_exists($model)) {
+                return new WebServiceException(500, "Model '$model' does not exist");
+            }
+        } else {
+            // If model missing, stop + return blank object
+            return new WebServiceException(500, "ContentAPIController::handleService expects \$Model parameter");
+        }
 
-		// Map HTTP word to module method
-		$response = '';
-		switch ($requestType) {
-		case 'GET';
-			$response = $this->findModel($model, $arg1, $arg2, $queryParams);
-			break;
+        // Map HTTP word to module method
+        $response = '';
+        switch ($requestType) {
+        case 'GET';
+            $response = $this->findModel($model, $arg1, $arg2, $queryParams);
+            break;
 
-		case 'POST':
-			if ($arg1=='delete') {
-				$response = $this->deleteModel($model, $arg1, $arg2);
-			} else {
-				if ($arg1) {
-					// URL parameter overrides the ID in the body.
-					$response = $this->updateModel($model, $arg1, $arg2, $queryParams);
-				} else if (isset($queryParams['ID'])) {
-					$response = $this->updateModel($model, $queryParams['ID'], $arg2, $queryParams);
-				} else {
-					$response = $this->createModel($model, $queryParams);
-				}
-			}
-			break;
+        case 'POST':
+            if ($arg1=='delete') {
+                $response = $this->deleteModel($model, $arg1, $arg2);
+            } else {
+                if ($arg1) {
+                    // URL parameter overrides the ID in the body.
+                    $response = $this->updateModel($model, $arg1, $arg2, $queryParams);
+                } elseif (isset($queryParams['ID'])) {
+                    $response = $this->updateModel($model, $queryParams['ID'], $arg2, $queryParams);
+                } else {
+                    $response = $this->createModel($model, $queryParams);
+                }
+            }
+            break;
 
-		default:
-			return new WebServiceException(500, "Invalid HTTP verb");
-			break;
-		}
+        default:
+            return new WebServiceException(500, "Invalid HTTP verb");
+            break;
+        }
 
-		$responseItem = $this->convertResponse($response);
-		return $this->converters[$this->format]['FinalConverter']->convert($responseItem);
+        $responseItem = $this->convertResponse($response);
+        return $this->converters[$this->format]['FinalConverter']->convert($responseItem);
+    }
 
-	}
+    public function findModel($model, $arg1, $arg2 = null, $queryParams = null)
+    {
+        if (is_numeric($arg1)) {
+            return DataObject::get($model)->byID($arg1);
+        } elseif (in_array($arg1, array('all', 'count', 'last', 'first', 'map', 'column'))) {
+            $data = DataList::create($model);
 
-	function findModel($model, $arg1, $arg2 = null, $queryParams = null) {
+            foreach ($queryParams as $param => $value) {
+                switch ($param) {
 
-		if (is_numeric($arg1)) {
+                case 'filter':
+                case 'exclude':
+                    // For now only support a comma separated list of field conditions that will be ANDed.
+                    // The values can be a "|" separated list that will be ORed.
+                    $fields = explode(',', $value);
+                    $fieldFilters = array();
 
-			return DataObject::get($model)->byID($arg1);
+                    foreach ($fields as $field) {
+                        $lastColonPos = strrpos($field, ':');
+                        $columnAndFilters = substr($field, 0, $lastColonPos);
+                        $conditions = substr($field, $lastColonPos + 1);
 
-		} else if (in_array($arg1, array('all', 'count', 'last', 'first', 'map', 'column'))) {
+                        $conditionArray = explode('|', $conditions);
+                        if (count($conditionArray)==1) {
+                            $fieldFilters["$columnAndFilters"] = $conditionArray[0];
+                        } else {
+                            $fieldFilters["$columnAndFilters"] = $conditionArray;
+                        }
+                    }
 
-			$data = DataList::create($model);
+                    if ($param=='filter') {
+                        $data = $data->filter($fieldFilters);
+                    } else {
+                        $data = $data->exclude($fieldFilters);
+                    }
+                    break;
 
-			foreach ($queryParams as $param => $value) {
-			switch ($param) {
+                case 'sort':
+                    if ($value=='__RAND') {
+                        $data = $data->sort('RAND()');
+                    } else {
+                        $fields = explode(',', $value);
+                        $fieldSorts = array();
+                        foreach ($fields as $field) {
+                            if (preg_match('/([+-]?)([A-Za-z]+)/', $field, $matches)) {
+                                if (count($matches)==3) {
+                                    $direction = $matches[1]=='-' ? 'DESC' : 'ASC';
+                                    $column = $matches[2];
+                                    $fieldSorts[$column] = $direction;
+                                }
+                            }
+                        }
 
-				case 'filter':
-				case 'exclude':
-					// For now only support a comma separated list of field conditions that will be ANDed.
-					// The values can be a "|" separated list that will be ORed.
-					$fields = explode(',', $value);
-					$fieldFilters = array();
+                        $data = $data->sort($fieldSorts);
+                    }
+                    break;
 
-					foreach ($fields as $field) {
-						$lastColonPos = strrpos($field, ':');
-						$columnAndFilters = substr($field, 0, $lastColonPos);
-						$conditions = substr($field, $lastColonPos + 1);
+                case 'limit':
+                    $limits = explode(',', $value);
+                    if (count($limits)==2) {
+                        $data = $data->limit($limits[0], $limits[1]);
+                    } elseif (count($limits)==1) {
+                        $data = $data->limit($limits[0]);
+                    }
+                    break;
 
-						$conditionArray = explode('|', $conditions);
-						if (count($conditionArray)==1) {
-							$fieldFilters["$columnAndFilters"] = $conditionArray[0];
-						} else {
-							$fieldFilters["$columnAndFilters"] = $conditionArray;
-						}
-					}
+                default:
+                    // Skip unrecognised query parameters.
+                    break;
+                }
+            }
 
-					if ($param=='filter') {
-						$data = $data->filter($fieldFilters);
-					} else {
-						$data = $data->exclude($fieldFilters);
-					}
-					break;
+            // Apply a method that finalises the query.
+            switch ($arg1) {
+            case 'count':
+                return $data->count();
 
-				case 'sort':
-					if ($value=='__RAND') {
+            case 'last':
+                return $data->Last();
 
-						$data = $data->sort('RAND()');
+            case 'first':
+                return $data->First();
 
-					} else {
+            case 'map':
+                $map = explode(',', $arg2);
+                if (count($map)==2) {
+                    return $data->map($map[0], $map[1]);
+                } else {
+                    return null;
+                }
 
-						$fields = explode(',', $value);
-						$fieldSorts = array();
-						foreach ($fields as $field) {
-							if (preg_match('/([+-]?)([A-Za-z]+)/', $field, $matches)) {
-								if (count($matches)==3) {
-									$direction = $matches[1]=='-' ? 'DESC' : 'ASC';
-									$column = $matches[2];
-									$fieldSorts[$column] = $direction;
-								}
-							}
-						}
+            case 'column':
+                return $data->column($arg2);
 
-						$data = $data->sort($fieldSorts);
-					}
-					break;
+            case 'all':
+            default:
+                return $data;
+            }
+        }
 
-				case 'limit':
-					$limits = explode(',', $value);
-					if (count($limits)==2) {
-						$data = $data->limit($limits[0], $limits[1]);
-					} else if (count($limits)==1) {
-						$data = $data->limit($limits[0]);
-					}
-					break;
+        throw new WebServiceException(500,
+            'Unrecognised combination of method and parameters in ContentAPIController::findModel');
+    }
 
-				default:
-					// Skip unrecognised query parameters.
-					break;
-				}
-			}
+    public function createModel($model, $queryParams)
+    {
+        $newModel = $this->injector->create($model);
+        $newModel->write();
 
-			// Apply a method that finalises the query.
-			switch ($arg1) {
-			case 'count':
-				return $data->count();
+        return $this->updateModel($model, $newModel->ID, null, $queryParams);
+    }
 
-			case 'last':
-				return $data->Last();
+    public function updateModel($model, $id, $arg2, $queryParams)
+    {
+        $object = DataObject::get($model)->byID($id);
 
-			case 'first':
-				return $data->First();
+        if (!$object) {
+            return new WebServiceException(404, "Record not found.");
+        }
 
-			case 'map':
-				$map = explode(',', $arg2);
-				if (count($map)==2) {
-					return $data->map($map[0], $map[1]);
-				} else {
-					return null;
-				}
+        if ($object) {
+            $has_one = Config::inst()->get($object->ClassName, 'has_one', Config::INHERITED);
+            $has_many = Config::inst()->get($object->ClassName, 'has_many', Config::INHERITED);
+            $many_many = Config::inst()->get($object->ClassName, 'many_many', Config::INHERITED);
+            $belongs_many_many = Config::inst()->get($object->ClassName, 'belongs_many_many', Config::INHERITED);
 
-			case 'column':
-				return $data->column($arg2);
+            $hasChanges = false;
+            $hasRelationChanges = false;
 
-			case 'all':
-			default:
-				return $data;
-			}
+            foreach ($queryParams as $attribute => $value) {
+                if (!is_array($value)) {
+                    if (is_array($has_one) && array_key_exists($attribute, $has_one)) {
+                        $relation = $attribute . 'ID';
+                        $object->$relation = $value;
+                        $hasChanges = true;
+                    } elseif ($object->{$attribute} != $value) {
+                        $object->{$attribute} = $value;
+                        $hasChanges = true;
+                    }
+                } else {
 
-		}
+                    //has_many, many_many or belong_many_many
+                    if (
+                        is_array($has_many) && array_key_exists($attribute, $has_many) ||
+                        is_array($many_many) && array_key_exists($attribute, $many_many) ||
+                        is_array($belongs_many_many) && array_key_exists($attribute, $belongs_many_many)
+                    ) {
+                        $hasRelationChanges = true;
+                        $ssList = $object->{$attribute}();
+                        $ssList->removeAll(); //reset list
+                        foreach ($value as $id) {
+                            $ssList->add($id);
+                        }
+                    }
+                }
+            }
 
-		throw new WebServiceException(500,
-			'Unrecognised combination of method and parameters in ContentAPIController::findModel');
+            if ($hasChanges || $hasRelationChanges) {
+                $object->write(false, false, false, $hasRelationChanges);
+            }
+        }
 
-	}
+        return DataObject::get($model)->byID($object->ID);
+    }
 
-	function createModel($model, $queryParams) {
-		$newModel = $this->injector->create($model);
-		$newModel->write();
-
-		return $this->updateModel($model, $newModel->ID, null, $queryParams);
-	}
-
-	function updateModel($model, $id, $arg2, $queryParams) {
-
-		$object = DataObject::get($model)->byID($id);
-
-		if ( !$object ) {
-			return new WebServiceException(404, "Record not found.");
-		}
-
-		if ( $object ) {
-
-			$has_one = Config::inst()->get( $object->ClassName, 'has_one', Config::INHERITED );
-			$has_many = Config::inst()->get( $object->ClassName, 'has_many', Config::INHERITED );
-			$many_many = Config::inst()->get( $object->ClassName, 'many_many', Config::INHERITED );
-			$belongs_many_many = Config::inst()->get( $object->ClassName, 'belongs_many_many', Config::INHERITED );
-
-			$hasChanges = false;
-			$hasRelationChanges = false;
-
-			foreach ($queryParams as $attribute => $value) {
-
-				if ( !is_array($value) ) {
-
-					if ( is_array($has_one) && array_key_exists($attribute, $has_one) ) {
-
-						$relation = $attribute . 'ID';
-						$object->$relation = $value;
-						$hasChanges = true;
-
-					} else if ( $object->{$attribute} != $value ) {
-
-						$object->{$attribute} = $value;
-						$hasChanges = true;
-
-					}
-
-				} else {
-
-					//has_many, many_many or belong_many_many
-					if (
-						is_array($has_many) && array_key_exists($attribute, $has_many) ||
-						is_array($many_many) && array_key_exists($attribute, $many_many) ||
-						is_array($belongs_many_many) && array_key_exists($attribute, $belongs_many_many) 
-					) {
-						$hasRelationChanges = true;
-						$ssList = $object->{$attribute}();
-						$ssList->removeAll(); //reset list
-						foreach ($value as $id)
-						{
-							$ssList->add( $id );
-						}
-					}
-
-				}
-			}
-
-			if ( $hasChanges || $hasRelationChanges ) {
-				$object->write(false, false, false, $hasRelationChanges);
-			}
-		}
-
-		return DataObject::get($model)->byID($object->ID);
-	}
-
-	function deleteModel($model, $arg1, $id) {
-
-		if ( $id ) {
-			$object = DataObject::get($model)->byID($id);
-			if ( $object ) {
-				$object->delete();
-			} else {
-				return new WebServiceException(404, "Record not found.");
-			}
-		} else {
-			return new WebServiceException(500, "Invalid or missing ID. Received '$id'.");
-		}
-
-	}
+    public function deleteModel($model, $arg1, $id)
+    {
+        if ($id) {
+            $object = DataObject::get($model)->byID($id);
+            if ($object) {
+                $object->delete();
+            } else {
+                return new WebServiceException(404, "Record not found.");
+            }
+        } else {
+            return new WebServiceException(500, "Invalid or missing ID. Received '$id'.");
+        }
+    }
 }
